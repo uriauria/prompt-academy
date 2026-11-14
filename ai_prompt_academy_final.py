@@ -24,11 +24,10 @@ USE FROM OTHER DEVICES (phone, tablet, another computer on the same Wi-Fi):
 
 HOSTING ONLINE (anyone with the link, from anywhere):
   Deploy this file to a host such as Render, Railway or Koyeb and set
-  these environment variables there:
+  this environment variable there:
      GEMINI_API_KEY = your key
-     APA_PASSWORD   = an access password (REQUIRED online, otherwise anyone could use your key)
   The host sets PORT automatically; the app detects it and listens publicly.
-  Visitors get a browser login prompt: any username, and the password you chose.
+  There is no password: anyone with the link can use the app (and your key's quota).
 
 MODEL FALLBACK:
   If a model returns "high demand" (503), a rate limit (429), a server error (500)
@@ -53,8 +52,6 @@ if sys.version_info[0] < 3:
 import http.server
 import json
 import os
-import base64
-import hmac
 import socket
 import threading
 import urllib.error
@@ -87,7 +84,6 @@ def load_key():
 
 
 KEY = load_key()
-PASSWORD = os.environ.get("APA_PASSWORD", "")
 HOSTED = bool(os.environ.get("PORT"))  # cloud hosts set PORT
 
 HTML = r'''<!doctype html>
@@ -704,33 +700,12 @@ GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/%s:streamG
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
-    def authorized(self):
-        if not PASSWORD:
-            return True
-        h = self.headers.get("Authorization", "")
-        if h.startswith("Basic "):
-            try:
-                pw = base64.b64decode(h[6:]).decode("utf-8").split(":", 1)[1]
-                return hmac.compare_digest(pw.encode("utf-8"), PASSWORD.encode("utf-8"))
-            except Exception:
-                return False
-        return False
-
-    def deny(self):
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="AI Prompt Academy", charset="UTF-8"')
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
     def do_GET(self):
         if self.path == "/healthz":
             self.send_response(200)
             self.send_header("Content-Length", "2")
             self.end_headers()
             self.wfile.write(b"ok")
-            return
-        if not self.authorized():
-            self.deny()
             return
         if self.path.split("?")[0] in ("/", "/index.html"):
             body = PAGE.encode("utf-8")
@@ -744,9 +719,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        if not self.authorized():
-            self.deny()
-            return
         # Proxy: /gemini/<model>  ->  Gemini streaming API, using the key stored on the server.
         model = self.path.split("?")[0][len("/gemini/"):] if self.path.startswith("/gemini/") else ""
         if not KEY or not model or not all(c.isalnum() or c in "-._" for c in model):
@@ -808,12 +780,9 @@ def lan_ip():
 
 def main():
     if HOSTED:
-        if KEY and not PASSWORD:
-            raise SystemExit("Refusing to start online without APA_PASSWORD: anyone could use your API key. "
-                             "Set the APA_PASSWORD environment variable on your host.")
         port = int(os.environ["PORT"])
         server = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
-        print("AI Prompt Academy is live on port %d (password %s)" % (port, "ON" if PASSWORD else "off"))
+        print("AI Prompt Academy is live on port %d" % port)
         try:
             server.serve_forever()
         except KeyboardInterrupt:
